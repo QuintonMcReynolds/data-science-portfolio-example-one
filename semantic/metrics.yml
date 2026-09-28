@@ -1,0 +1,112 @@
+# Semantic layer: one governed definition per KPI.
+# Dashboards, ad-hoc queries, and exec decks all compile from this file,
+# so "on-time %" means the same thing in every meeting.
+
+model:
+  from: |
+    gold.fact_shipment f
+    JOIN gold.dim_lane l ON f.lane_id = l.lane_id
+    JOIN gold.dim_carrier c ON f.carrier_id = c.carrier_id
+    JOIN gold.dim_customer cu ON f.customer_id = cu.customer_id
+    JOIN gold.dim_date d ON f.pickup_date_key = d.date_key
+  date_column: f.pickup_date
+
+dimensions:
+  month: {sql: d.year_month, label: Month}
+  quarter: {sql: d.year_quarter, label: Quarter}
+  mode: {sql: f.mode, label: Mode}
+  carrier: {sql: c.carrier_name, label: Carrier}
+  lane: {sql: l.lane_id, label: Lane}
+  origin: {sql: l.origin_city, label: Origin}
+  destination: {sql: l.dest_city, label: Destination}
+  origin_region: {sql: l.origin_region, label: Origin region}
+  dest_region: {sql: l.dest_region, label: Destination region}
+  corridor: {sql: l.corridor, label: Corridor}
+  customer: {sql: cu.customer_name, label: Customer}
+  segment: {sql: cu.segment, label: Segment}
+  industry: {sql: cu.industry, label: Industry}
+
+metrics:
+  - name: shipments
+    label: Shipments
+    sql: COUNT(*)
+    format: int
+    direction: up
+    owner: VP Data Analytics & BI
+    description: Count of non-cancelled shipments picked up in the period.
+
+  - name: revenue
+    label: Revenue
+    sql: SUM(f.revenue_usd)
+    format: usd
+    direction: up
+    owner: CFO / FP&A
+    description: Linehaul + fuel surcharge + accessorial revenue.
+
+  - name: gross_margin
+    label: Gross margin
+    sql: SUM(f.gross_margin_usd)
+    format: usd
+    direction: up
+    owner: CFO / FP&A
+    description: Revenue minus carrier linehaul, fuel, and accessorial cost.
+
+  - name: gross_margin_pct
+    label: Gross margin %
+    sql: SUM(f.gross_margin_usd) / NULLIF(SUM(f.revenue_usd), 0)
+    format: pct
+    direction: up
+    target: 0.18
+    owner: CFO / FP&A
+    description: Gross margin as a share of revenue.
+
+  - name: on_time_pct
+    label: On-time %
+    sql: AVG(CAST(f.is_on_time AS DOUBLE))
+    format: pct
+    direction: up
+    target: 0.90
+    owner: SVP Operations
+    description: Delivered shipments arriving on or before the promised date. In-transit shipments are excluded.
+
+  - name: otif_pct
+    label: OTIF %
+    sql: AVG(CAST(f.is_otif AS DOUBLE))
+    format: pct
+    direction: up
+    target: 0.87
+    owner: SVP Operations
+    description: Delivered on time AND in full. The metric most shippers write into contracts.
+
+  - name: cost_per_mile
+    label: Cost per mile
+    sql: SUM(f.total_cost_usd) / NULLIF(SUM(f.miles), 0)
+    format: usd2
+    direction: down
+    owner: SVP Operations
+    description: Total carrier cost divided by loaded miles.
+
+  - name: revenue_per_mile
+    label: Revenue per mile
+    sql: SUM(f.revenue_usd) / NULLIF(SUM(f.miles), 0)
+    format: usd2
+    direction: up
+    owner: Chief Commercial Officer
+    description: Total revenue divided by loaded miles.
+
+  - name: claims_rate
+    label: Claims rate
+    sql: AVG(CAST(f.has_claim AS DOUBLE)) FILTER (WHERE f.status = 'Delivered')
+    format: pct2
+    direction: down
+    target: 0.015
+    owner: VP Safety & Claims
+    description: Share of delivered shipments with a cargo loss or damage claim.
+
+  - name: avg_days_late
+    label: Avg days late (late loads)
+    sql: AVG(f.days_late) FILTER (WHERE f.days_late > 0)
+    format: dec
+    direction: down
+    owner: SVP Operations
+    description: Average lateness among shipments that missed their promised date.

@@ -1,0 +1,85 @@
+# Data contracts: the agreement between data producers and consumers.
+# Each governed table has an accountable owner, a business steward, a
+# classification, a declared grain, and executable quality checks.
+# Severity "error" blocks certification; "warn" is surfaced for stewards.
+
+tables:
+  gold.fact_shipment:
+    description: One row per non-cancelled shipment. System of record for volume, service, and margin.
+    grain: shipment_id
+    owner: Director, Data Engineering
+    steward: Operations Analytics Manager
+    classification: Internal
+    refresh: Daily 05:00 ET
+    columns:
+      shipment_id: {description: TMS shipment identifier, pii: false}
+      customer_id: {description: FK to dim_customer, pii: false}
+      revenue_usd: {description: Linehaul + fuel + accessorial revenue, pii: false}
+      gross_margin_usd: {description: Revenue minus carrier, fuel, and accessorial cost, pii: false}
+      is_on_time: {description: Delivered on or before promised date; null until delivered, pii: false}
+    checks:
+      - {type: unique, column: shipment_id, severity: error}
+      - {type: not_null, column: customer_id, severity: error}
+      - {type: not_null, column: pickup_date, severity: error}
+      - {type: relationships, column: customer_id, to: gold.dim_customer.customer_id, severity: error}
+      - {type: relationships, column: carrier_id, to: gold.dim_carrier.carrier_id, severity: error}
+      - {type: relationships, column: lane_id, to: gold.dim_lane.lane_id, severity: error}
+      - {type: accepted_values, column: mode, values: [TL, LTL, Intermodal], severity: error}
+      - {type: accepted_values, column: status, values: [Delivered, In Transit], severity: error}
+      - {type: range, column: weight_lbs, min: 1, max: 48000, severity: error}
+      - {type: range, column: revenue_usd, min: 0, max: 50000, severity: warn}
+      - {type: expression, name: delivered_after_pickup, sql: "actual_delivery_date IS NULL OR actual_delivery_date >= pickup_date", severity: error}
+      - {type: expression, name: delivered_has_on_time_flag, sql: "status <> 'Delivered' OR is_on_time IS NOT NULL", severity: error}
+      - {type: freshness, column: pickup_date, max_age_days: 2, severity: error}
+
+  gold.dim_customer:
+    description: Customer master, conformed from CRM.
+    grain: customer_id
+    owner: Director, Data Engineering
+    steward: Commercial Operations
+    classification: Confidential
+    columns:
+      customer_id: {description: CRM account id, pii: false}
+      customer_name: {description: Legal account name, pii: false}
+      contact_email_masked: {description: Masked ops contact; clear text restricted to silver, pii: true}
+    checks:
+      - {type: unique, column: customer_id, severity: error}
+      - {type: not_null, column: segment, severity: error}
+      - {type: accepted_values, column: segment, values: [Enterprise, Mid-Market, SMB], severity: error}
+      - {type: expression, name: email_is_masked, sql: "contact_email_masked LIKE '_***@%'", severity: error}
+
+  gold.dim_carrier:
+    description: Contracted carrier master.
+    grain: carrier_id
+    owner: Director, Data Engineering
+    steward: Procurement / Carrier Relations
+    classification: Internal
+    columns:
+      carrier_id: {description: Carrier master id, pii: false}
+    checks:
+      - {type: unique, column: carrier_id, severity: error}
+      - {type: accepted_values, column: primary_mode, values: [TL, LTL, Intermodal], severity: error}
+
+  gold.dim_lane:
+    description: Origin-destination pairs across the terminal network.
+    grain: lane_id
+    owner: Director, Data Engineering
+    steward: Network Planning
+    classification: Internal
+    columns:
+      lane_id: {description: ORIGIN-DEST facility codes, pii: false}
+    checks:
+      - {type: unique, column: lane_id, severity: error}
+      - {type: not_null, column: origin_lat, severity: error}
+
+  silver.shipments:
+    description: Cleaned shipment records before business logic. Restricted.
+    grain: shipment_id
+    owner: Director, Data Engineering
+    steward: Operations Analytics Manager
+    classification: Restricted
+    columns:
+      shipment_id: {description: TMS shipment identifier, pii: false}
+    checks:
+      - {type: unique, column: shipment_id, severity: error}
+      - {type: quarantine_rate, max_rate: 0.01, severity: warn}
